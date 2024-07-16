@@ -11,14 +11,14 @@ import {
   HttpError,
   Identifier,
   QueryFunctionContext,
-  RaRecord,
-  UpdateParams,
+  RaRecord, SortPayload,
+  UpdateParams
 } from "ra-core";
 import {
   OData,
   EdmV4,
   SystemQueryOptions,
-  ODataNewOptions,
+  ODataNewOptions, ODataParamOrderField
 } from "@odata/client";
 import { resource_id_mapper } from "./ra-data-id-mapper";
 import { parse_metadata } from "./metadata_parser";
@@ -30,13 +30,55 @@ import {
   getODataLikeKeyFormat,
 } from "./helpers";
 
-interface GetListParamsWithTypedMeta extends GetListParams {
+type GetListParamsWithTypedMeta = GetListParams &{
   meta?: {
     select?: string[];
     expand?: string[];
+    sort?:SortPayload[];
     [key: string]: any;
   }
 }
+
+type GetOneParamsWithTypedMeta = GetOneParams & {
+  meta?: {
+    select?: string[];
+    expand?: string[];
+    sort?:SortPayload[];
+    [key: string]: any;
+  }
+}
+
+
+
+/*
+ inline method to extract the sort from the SystemQueryOptions object.
+  */
+const SortMulti = (defaultSort:SortPayload, sort?: SortPayload | SortPayload[]) => {
+  if (sort) {
+    const multiSort:ODataParamOrderField<any>[] = defaultSort?[...defaultSort]:[];
+
+    if (sort instanceof Array) {
+      multiSort.push(
+        ...sort
+          .map((value) => {
+            const { field, order } = value;
+            return { field:getODataLikeKeyFormat(field), order: order === "DESC" ? "desc" : "asc" } as ODataParamOrderField<any>;
+          }),
+      );
+    } else {
+      const { field, order } = sort;
+      if (!field.includes(".") && multiSort.filter((m) => m.field === field).length === 0) {
+        multiSort.push({ field, order: order === "DESC" ? "desc" : "asc" });
+      }
+    }
+    return multiSort
+  }
+  if(defaultSort) {
+    const d: ODataParamOrderField<any> = { field: defaultSort.field, order: defaultSort.order === "DESC" ? "desc" : "asc" }
+    return d;
+  }
+  return null
+};
 
 async function get_entities(
   url: string,
@@ -93,6 +135,7 @@ const ra_data_odata_server = async (
    * differently in the odata URL ("/Employees(1)" vs
    * "/Customers('ALFKI')")
    * @param resource supplies the resource
+   * @param propertyName property name
    * @param id supplies the entity ID
    * @returns
    */
@@ -157,20 +200,23 @@ const ra_data_odata_server = async (
         resource: string,
         params: GetListParamsWithTypedMeta & QueryFunctionContext
       ) => {
-        const { page, perPage } = params.pagination ||{};
-        const { field, order } = params.sort ||{}; // order is either 'DESC' or 'ASC'
-        const { select = [], expand = [] } = params.meta as Required<GetListParamsWithTypedMeta>['meta'] || {};
+        const { page, perPage } = params.pagination || {};
+        const { field, order } = params.sort || {}; // order is either 'DESC' or 'ASC'
+        const { select = [], expand = [], sort } = params.meta as Required<GetListParamsWithTypedMeta>['meta'] || {};
         const client = await getClient();
-
         
-        const queryOptions =
-          (field && page &&perPage) ? new SystemQueryOptions()
-          .count()
-          .orderby(getODataLikeKeyFormat(field), order === "DESC" ? "desc" : "asc")
-          .skip((page - 1) * perPage)
-          .top(perPage)
-        : new SystemQueryOptions();
+        const sortpayload = SortMulti({field:getODataLikeKeyFormat(field), order:order},sort)
 
+        let queryOptions = new SystemQueryOptions();
+        if(page && perPage && sortpayload) {
+          queryOptions =
+            Array.isArray(sortpayload) ? queryOptions.count().orderbyMulti(sortpayload):
+               queryOptions.count().orderby(sortpayload.field,sortpayload.order);
+          queryOptions = queryOptions
+            .skip(page - 1 * page).top(perPage)
+          ;
+        }
+        
         if (select.length > 0) {
           const selectSet = new Set(select);
           const uniqueSelectFields = Array.from(selectSet);
@@ -314,7 +360,17 @@ const ra_data_odata_server = async (
         resource: string,
         params: GetOneParams
       ) => {
-        return { data: await getEntity<RecordType>(resource, params.id) };
+        const { expand = [] } = params.meta as Required<GetOneParamsWithTypedMeta>['meta'] || {};
+        let p: SystemQueryOptions | undefined;
+        
+        if (expand.length > 0) {
+          const expandSet = new Set(expand);
+          const uniqueExpandFields = Array.from(expandSet);
+
+          p=new SystemQueryOptions().expand(uniqueExpandFields.map(getExpandString));
+        }
+        
+        return { data: await getEntity<RecordType>(resource, params.id,p) };
       },
 
       getMany: async <RecordType extends RaRecord = RaRecord>(
