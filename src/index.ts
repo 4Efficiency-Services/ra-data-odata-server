@@ -11,24 +11,17 @@ import {
   HttpError,
   Identifier,
   QueryFunctionContext,
-  RaRecord, SortPayload,
+  RaRecord,
+  SortPayload,
   UpdateParams
 } from "ra-core";
-import {
-  OData,
-  EdmV4,
-  SystemQueryOptions,
-  ODataNewOptions, ODataParamOrderField
-} from "@odata/client";
-import { resource_id_mapper } from "./ra-data-id-mapper";
-import { parse_metadata } from "./metadata_parser";
-import { ArrayFilterExpressions } from "./ArrayFilterExpressions";
-import { filterNameParser } from "./filterNameParser";
-import {
-  capitalize,
-  getExpandString,
-  getODataLikeKeyFormat,
-} from "./helpers";
+import {EdmV4, OData, ODataNewOptions, SystemQueryOptions} from "@odata/client";
+import {resource_id_mapper} from "./ra-data-id-mapper";
+import {parse_metadata} from "./metadata_parser";
+import {ArrayFilterExpressions} from "./ArrayFilterExpressions";
+import {filterNameParser} from "./filterNameParser";
+import {capitalize, getExpandString, getODataLikeKeyFormat,} from "./helpers";
+import {SortByMultipleFields} from "./helpers/sortByMultipleFields";
 
 type GetListParamsWithTypedMeta = GetListParams &{
   meta?: {
@@ -50,35 +43,6 @@ type GetOneParamsWithTypedMeta = GetOneParams & {
 
 
 
-/*
- inline method to extract the sort from the SystemQueryOptions object.
-  */
-const SortMulti = (defaultSort:SortPayload, sort?: SortPayload | SortPayload[]) => {
-  if (sort) {
-    const multiSort:ODataParamOrderField<any>[] = defaultSort?[...defaultSort]:[];
-
-    if (sort instanceof Array) {
-      multiSort.push(
-        ...sort
-          .map((value) => {
-            const { field, order } = value;
-            return { field:getODataLikeKeyFormat(field), order: order === "DESC" ? "desc" : "asc" } as ODataParamOrderField<any>;
-          }),
-      );
-    } else {
-      const { field, order } = sort;
-      if (!field.includes(".") && multiSort.filter((m) => m.field === field).length === 0) {
-        multiSort.push({ field, order: order === "DESC" ? "desc" : "asc" });
-      }
-    }
-    return multiSort
-  }
-  if(defaultSort) {
-    const d: ODataParamOrderField<any> = { field: defaultSort.field, order: defaultSort.order === "DESC" ? "desc" : "asc" }
-    return d;
-  }
-  return null
-};
 
 async function get_entities(
   url: string,
@@ -158,11 +122,10 @@ const ra_data_odata_server = async (
 
   const getClient = async () => {
     const options = await odata_options_callback();
-    const client = OData.New4({
-      metadataUri: apiUrl + "/$metadata",
+    return OData.New4({
+      serviceEndpoint: apiUrl + "/$metadata",
       ...options,
     });
-    return client;
   };
 
   const getEntity = async <RecordType extends RaRecord = RaRecord>(
@@ -205,7 +168,7 @@ const ra_data_odata_server = async (
         const { select = [], expand = [], sort } = params.meta as Required<GetListParamsWithTypedMeta>['meta'] || {};
         const client = await getClient();
         
-        const sortpayload = SortMulti({field:getODataLikeKeyFormat(field), order:order},sort)
+        const sortpayload = SortByMultipleFields(params.sort,sort)
 
         let queryOptions = new SystemQueryOptions();
         if(page && perPage && sortpayload) {
@@ -218,7 +181,7 @@ const ra_data_odata_server = async (
         }
         
         if (select.length > 0) {
-          const selectSet = new Set(select);
+          const selectSet = new Set<string>(select);
           const uniqueSelectFields = Array.from(selectSet);
 
           queryOptions.select(uniqueSelectFields.map(capitalize));
