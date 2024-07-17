@@ -164,7 +164,7 @@ const ra_data_odata_server = async (
         params: GetListParamsWithTypedMeta & QueryFunctionContext
       ) => {
         const { page, perPage } = params.pagination || {};
-        const { field, order } = params.sort || {}; // order is either 'DESC' or 'ASC'
+        //const { field, order } = params.sort || {}; // order is either 'DESC' or 'ASC'
         const { select = [], expand = [], sort } = params.meta as Required<GetListParamsWithTypedMeta>['meta'] || {};
         const client = await getClient();
         
@@ -188,7 +188,7 @@ const ra_data_odata_server = async (
         }
 
         if (expand.length > 0) {
-          const expandSet = new Set(expand);
+          const expandSet = new Set<string>(expand);
           const uniqueExpandFields = Array.from(expandSet);
 
           queryOptions.expand(uniqueExpandFields.map(getExpandString));
@@ -327,7 +327,7 @@ const ra_data_odata_server = async (
         let p: SystemQueryOptions | undefined;
         
         if (expand.length > 0) {
-          const expandSet = new Set(expand);
+          const expandSet = new Set<string>(expand);
           const uniqueExpandFields = Array.from(expandSet);
 
           p=new SystemQueryOptions().expand(uniqueExpandFields.map(getExpandString));
