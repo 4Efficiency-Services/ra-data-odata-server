@@ -22,6 +22,7 @@ import {ArrayFilterExpressions} from "./ArrayFilterExpressions";
 import {filterNameParser} from "./filterNameParser";
 import {capitalize, getExpandString, getODataLikeKeyFormat,} from "./helpers";
 import {SortByMultipleFields} from "./helpers/sortByMultipleFields";
+import {ODataV4} from "@odata/client/lib/types_v4";
 
 type GetListParamsWithTypedMeta = GetListParams &{
   meta?: {
@@ -77,6 +78,105 @@ export type OdataDataProvider = DataProvider<string> & {
   getResources: () => string[];
   action: (resource: string, params: ActionParams) => Promise<unknown>;
 };
+
+function BuildFilter(filterName: string, queryOptions: SystemQueryOptions<any>, params: GetListParams & {
+  meta?: { select?: string[]; expand?: string[]; sort?: SortPayload[]; [p: string]: any }
+} & QueryFunctionContext, client: ODataV4, arrayFilterExpressions: ArrayFilterExpressions) {
+  if (filterName === "q") {
+    queryOptions.search(params.filter[filterName], false);
+    return;
+  }
+
+  const {
+    fieldName,
+    operator,
+  } = filterNameParser(filterName);
+  const filterBuilder = client.newFilter().property(fieldName);
+  const filterValue = params.filter[filterName];
+  let filterExpression: string;
+
+  switch (operator) {
+    case "q":
+      filterExpression = client
+          .newFilter()
+          .property(`Contains(${fieldName},'${filterValue}')`)
+          .eq(true)
+          .build();
+      break;
+    case "neq":
+      filterExpression = filterBuilder.ne(filterValue).build();
+      break;
+    case "eq":
+      filterExpression = filterBuilder.eq(filterValue).build();
+      break;
+    case "lte":
+      filterExpression = filterBuilder.le(filterValue).build();
+      break;
+    case "lt":
+      filterExpression = filterBuilder.lt(filterValue).build();
+      break;
+    case "gte":
+      filterExpression = filterBuilder.ge(filterValue).build();
+      break;
+    case "gt":
+      filterExpression = filterBuilder.gt(filterValue).build();
+      break;
+    case "eq_any":
+      filterExpression = filterBuilder.in(filterValue).build();
+      break;
+    case "neq_any":
+      filterExpression = `${filterBuilder.in(filterValue).build()} eq false`;
+      break;
+    case "boolean":
+      filterExpression = filterBuilder.eq(filterValue).build();
+      break;
+    case "inc":
+      filterExpression = filterValue
+          .map((value: any) => {
+            if (typeof value === 'string') {
+              return `(${fieldName} eq '${value}')`;
+            }
+
+            return `(${fieldName} eq ${value})`;
+          })
+          .join(' and ');
+      break;
+    case "inc_any":
+      filterExpression = filterValue
+          .map((value: any) => {
+            if (typeof value === 'string') {
+              return `(${fieldName} eq '${value}')`;
+            }
+
+            return `(${fieldName} eq ${value})`;
+          })
+          .join(' or ');
+      break;
+    case "ninc_any":
+      filterExpression = filterValue
+          .map((value: any) => {
+            if (typeof value === 'string') {
+              return `(${fieldName} ne '${value}')`;
+            }
+
+            return `(${fieldName} ne ${value})`;
+          })
+          .join(' and ');
+      break;
+    default:
+      // this default filter was kept for compatibility reasons with
+      // ra-data-odata-server@<=4.0.0
+      filterExpression = client
+          .newFilter()
+          .property(`Contains(${filterName},'${filterValue}')`)
+          .eq(true)
+          .build();
+      console.warn(`Operator "${operator}" is not supported`);
+      break;
+  }
+
+  arrayFilterExpressions.add(filterExpression);
+}
 
 const ra_data_odata_server = async (
   apiUrl: string,
@@ -198,100 +298,7 @@ const ra_data_odata_server = async (
         const arrayFilterExpressions = new ArrayFilterExpressions();
 
         for (const filterName in params.filter) {
-          if (filterName === "q") {
-            queryOptions.search(params.filter[filterName], false);
-            continue;
-          }
-
-          const {
-            fieldName,
-            operator,
-          } = filterNameParser(filterName);
-          const filterBuilder = client.newFilter().property(fieldName);
-          const filterValue = params.filter[filterName];
-          let filterExpression: string;
-
-          switch (operator) {
-            case "q":
-              filterExpression = client
-                  .newFilter()
-                  .property(`Contains(${fieldName},'${filterValue}')`)
-                  .eq(true)
-                  .build();
-              break;
-            case "neq":
-              filterExpression = filterBuilder.ne(filterValue).build();
-              break;
-            case "eq":
-              filterExpression = filterBuilder.eq(filterValue).build();
-              break;
-            case "lte":
-              filterExpression = filterBuilder.le(filterValue).build();
-              break;
-            case "lt":
-              filterExpression = filterBuilder.lt(filterValue).build();
-              break;
-            case "gte":
-              filterExpression = filterBuilder.ge(filterValue).build();
-              break;
-            case "gt":
-              filterExpression = filterBuilder.gt(filterValue).build();
-              break;
-            case "eq_any":
-              filterExpression = filterBuilder.in(filterValue).build();
-              break;
-            case "neq_any":
-              filterExpression = `${filterBuilder.in(filterValue).build()} eq false`;
-              break;
-            case "boolean":
-              filterExpression = filterBuilder.eq(filterValue).build();
-              break;
-            case "inc":
-              filterExpression = filterValue
-                .map((value: any) => {
-                  if (typeof value === 'string') {
-                    return `(${fieldName} eq '${value}')`;
-                  }
-
-                  return `(${fieldName} eq ${value})`;
-                })
-                .join(' and ');
-              break;
-            case "inc_any":
-              filterExpression = filterValue
-                .map((value: any) => {
-                  if (typeof value === 'string') {
-                    return `(${fieldName} eq '${value}')`;
-                  }
-
-                  return `(${fieldName} eq ${value})`;
-                })
-                .join(' or ');
-              break;
-            case "ninc_any":
-              filterExpression = filterValue
-                .map((value: any) => {
-                  if (typeof value === 'string') {
-                    return `(${fieldName} ne '${value}')`;
-                  }
-
-                  return `(${fieldName} ne ${value})`;
-                })
-                .join(' and ');
-              break;
-            default:
-              // this default filter was kept for compatibility reasons with
-              // ra-data-odata-server@<=4.0.0
-              filterExpression = client
-                  .newFilter()
-                  .property(`Contains(${filterName},'${filterValue}')`)
-                  .eq(true)
-                  .build();
-              console.warn(`Operator "${operator}" is not supported`);
-              break;
-          }
-
-          arrayFilterExpressions.add(filterExpression);
+          BuildFilter(filterName, queryOptions, params, client, arrayFilterExpressions);
         }
 
         const filtersSet = new Set([

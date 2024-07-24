@@ -58,8 +58,17 @@ export function filterNameParser(filterName: string): FilterNameParserResult {
   let operator: Operator | null = null;
 
   for (let i = 0; i < operators.length; i++) {
-    if (filterName.endsWith(`_${operators[i]}`)) {
-      fieldName = filterName.replace(`_${operators[i]}`, "");
+    // First, interpolate the string with the dynamic part
+    const interpolatedString = `_${operators[i]}\d$`;
+
+    // Then, create a new RegExp object dynamically based on the interpolated string
+    const regex = new RegExp(interpolatedString)
+    if (regex.test(filterName)) {
+    //  filterName.endsWith(`_${operators[i]}`)) {
+      
+      //const regex = /_or\d$/;return regex.test(str);
+      //return str.replace(/_or\d$/, replacementText);
+      fieldName = filterName.replace(regex, "");
       operator = operators[i];
       break;
     }
